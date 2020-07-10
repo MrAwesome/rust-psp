@@ -143,7 +143,7 @@ pub struct ScePspL64Vector4 {
 }
 
 #[repr(C, align(16))]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct ScePspFVector4 {
     pub x: f32,
     pub y: f32,
@@ -243,7 +243,7 @@ pub struct ScePspIMatrix4Unaligned {
 }
 
 #[repr(C, align(16))]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct ScePspFMatrix4 {
     pub x: ScePspFVector4,
     pub y: ScePspFVector4,

@@ -1,6 +1,7 @@
 use crate::sys::TexturePixelFormat;
 use crate::sys::sceGeEdramGetSize;
 use core::mem::size_of;
+use core::ffi::c_void;
 
 pub struct VramMemChunk {
     start: u32,
@@ -18,6 +19,10 @@ impl VramMemChunk {
 
     pub fn len(&self) -> u32 {
         self.len
+    }
+
+    pub fn start_addr(&self) -> *mut c_void {
+        self.start as _
     }
 }
 

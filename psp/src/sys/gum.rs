@@ -192,6 +192,24 @@ pub unsafe extern "C" fn sceGumLoadIdentity() {
     CURRENT_MATRIX_UPDATE = 1;
 }
 
+/// Load identity matrix
+///
+/// ```txt
+/// [1 0 0 0]
+/// [0 1 0 0]
+/// [0 0 1 0]
+/// [0 0 0 1]
+/// ```
+#[allow(non_snake_case)]
+#[no_mangle]
+pub fn gumLoadIdentity(mat: &mut ScePspFMatrix4) {
+    *mat = ScePspFMatrix4::default();
+    mat.x.x = 1.0;
+    mat.y.y = 1.0;
+    mat.z.z = 1.0;
+    mat.w.w = 1.0;
+}
+
 /// Load matrix
 ///
 /// # Parameters
@@ -296,6 +314,18 @@ pub unsafe extern "C" fn sceGumMultMatrix(m: &ScePspFMatrix4) {
     );
 
     CURRENT_MATRIX_UPDATE = 1;
+}
+
+/// Multiply two matrices and return the result
+///
+/// # Parameters
+///
+/// - `a`: First matrix to multiply
+/// - `a`: Second matrix to multiply
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn gumMultMatrix(a: &ScePspFMatrix4, b: &ScePspFMatrix4) -> ScePspFMatrix4 {
+    gum_mult_matrix(a, b) 
 }
 
 /// Apply ortho projection matrix
