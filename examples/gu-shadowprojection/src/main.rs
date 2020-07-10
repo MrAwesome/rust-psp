@@ -2,13 +2,14 @@
 #![no_main]
 #![feature(core_intrinsics)]
 
+
 use core::mem;
 use core::intrinsics;
 use core::ffi::c_void;
 use psp::sys::{self, 
-    GuSyncMode, GuSyncBehavior,
-    FrontFaceDirection, MatrixMode, GuPrimitive, TexturePixelFormat, ScePspFMatrix4, 
-    ShadingModel,
+    GuSyncMode, GuSyncBehavior,LightType,LightComponent,TextureMapMode,GuTexWrapMode,
+    FrontFaceDirection, MatrixMode, GuPrimitive, TexturePixelFormat, ScePspFMatrix4, TextureFilter,
+    ShadingModel,ClearBuffer, TextureProjectionMapMode,MipmapLevel, TextureColorComponent, TextureEffect,
     VertexType, ScePspFVector3, GU_PI, GuContextType, DisplayPixelFormat, GuState, DepthFunc
 };
 use psp::vram_alloc::SimpleVramAllocator;
@@ -19,7 +20,7 @@ psp::module!("gu_shadowprojection", 1, 1);
 const TWO_PI: f32 = 2.0 * GU_PI;
 
 // TODO: should be i16?
-#[derive(Debug, Default)]
+#[derive(Copy, Clone, Debug, Default)]
 struct VertexNormal
 {
     nx: f32,
@@ -30,14 +31,14 @@ struct VertexNormal
     z: f32,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Texture
 {
     format: TexturePixelFormat,
-    mipmap: u32,
-    width: u32,
-    height: u32,
-    stride: u32,
+    mipmap: MipmapLevel,
+    width: i32,
+    height: i32,
+    stride: i32,
     data: *mut c_void,
 }
 
@@ -71,7 +72,7 @@ struct Geometry
     color: u32,
 }
 
-fn drawGeometry( geom: &Geometry ) {
+unsafe fn drawGeometry( geom: &Geometry ) {
     sys::sceGuSetMatrix(MatrixMode::Model,&geom.world);
 
     sys::sceGuColor(geom.color);
@@ -79,24 +80,25 @@ fn drawGeometry( geom: &Geometry ) {
     sys::sceGuDrawArray(GuPrimitive::Triangles, VertexType::NORMAL_32BITF|VertexType::VERTEX_32BITF|VertexType::INDEX_16BIT|VertexType::TRANSFORM_3D,geom.count,geom.indices as _, geom.vertices as _);
 }
 
-fn drawShadowCaster(geom: &Geometry) {
+unsafe fn drawShadowCaster(geom: &Geometry) {
     sys::sceGuSetMatrix(MatrixMode::Model, &geom.world);
 
     sys::sceGuColor(0x00000000);
-    sys::sceGuDrawArray(GuPrimitive::Triangles,VertexType::NORMAL_32BITF|VertexType::VERTEX_32BITF|VertexType::INDEX_16BIT|VertexType::TRANSFORM_3D,geom.count,geom.indices,geom.vertices);
+    sys::sceGuDrawArray(GuPrimitive::Triangles,VertexType::NORMAL_32BITF|VertexType::VERTEX_32BITF|VertexType::INDEX_16BIT|VertexType::TRANSFORM_3D,geom.count,geom.indices as _,geom.vertices as _);
 }
 
-fn drawShadowReceiver(geom: &Geometry ,  shadowProjMatrix: ScePspFMatrix4) {
+unsafe fn drawShadowReceiver(geom: &Geometry, mut shadowProjMatrix: ScePspFMatrix4) {
     sys::sceGuSetMatrix(MatrixMode::Model,&geom.world);
 
     // multiply shadowmap projection texture by geometry world matrix
     // since geometry coords are in object space
+    let shadclone = shadowProjMatrix.clone();
 
-    geom.world = sys::gumMultMatrix(&shadowProjMatrix, &shadowProjMatrix);
+    sys::gumMultMatrix(&mut shadowProjMatrix, &shadclone, &geom.world);
     sys::sceGuSetMatrix(MatrixMode::Texture, &shadowProjMatrix);
 
     sys::sceGuColor(geom.color);
-    sys::sceGuDrawArray(GuPrimitive::Triangles,VertexType::NORMAL_32BITF|VertexType::VERTEX_32BITF|VertexType::INDEX_16BIT|VertexType::TRANSFORM_3D,geom.count,geom.indices,geom.vertices);
+    sys::sceGuDrawArray(GuPrimitive::Triangles,VertexType::NORMAL_32BITF|VertexType::VERTEX_32BITF|VertexType::INDEX_16BIT|VertexType::TRANSFORM_3D,geom.count,geom.indices as _,geom.vertices as _);
 }
 
 fn psp_main() {
@@ -130,7 +132,7 @@ unsafe fn psp_main_inner() {
     // setup VRAM buffers
 
         let mut allocator = SimpleVramAllocator::new();
-        let frameBuffer = allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm8888).start_addr();
+        let mut frameBuffer = allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm8888).start_addr();
 
         let doubleBuffer = allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm8888).start_addr();
 
@@ -173,77 +175,73 @@ unsafe fn psp_main_inner() {
 
     // setup matrices
 
-    let identity = ScePspFMatrix4::default();
-    let projection = ScePspFMatrix4::default();
-    let view = ScePspFMatrix4::default();
+    let mut identity = ScePspFMatrix4::default();
+    let mut projection = ScePspFMatrix4::default();
+    let mut view = ScePspFMatrix4::default();
 
     sys::gumLoadIdentity(&mut identity);
 
     //sys::gumLoadIdentity(&projection);
     sys::gumLoadIdentity(&mut projection);
 
-    sys::gumPerspective(&projection,75.0,16.0/9.0,0.5,1000.0);
+    sys::gumPerspective(&mut projection,75.0,16.0/9.0,0.5,1000.0);
 
     {
-        let pos = ScePspFVector3{x: 0,y: 0,z: -5.0};
+        let pos = ScePspFVector3{x: 0.0,y: 0.0,z: -5.0};
 
-        sys::gumLoadIdentity(&view);
-        sys::gumTranslate(&view,&pos);
+        sys::gumLoadIdentity(&mut view);
+        sys::gumTranslate(&mut view, &pos);
     }
 
-    let textureProjScaleTrans = ScePspFMatrix4::default();
-    sys::gumLoadIdentity(&textureProjScaleTrans);
+    let mut textureProjScaleTrans = ScePspFMatrix4::default();
+    sys::gumLoadIdentity(&mut textureProjScaleTrans);
     textureProjScaleTrans.x.x = 0.5;
     textureProjScaleTrans.y.y = -0.5;
     textureProjScaleTrans.w.x = 0.5;
     textureProjScaleTrans.w.y = 0.5;
 
-    let lightProjection = ScePspFMatrix4::default();
-    let lightProjectionInf = ScePspFMatrix4::default();
-    let lightView = ScePspFMatrix4::default();
-    let lightMatrix = ScePspFMatrix4::default();
+    let mut lightProjection = ScePspFMatrix4::default();
+    let mut lightProjectionInf = ScePspFMatrix4::default();
+    let mut lightView = ScePspFMatrix4::default();
+    let mut lightMatrix = ScePspFMatrix4::default();
 
-    sys::gumLoadIdentity(&lightProjection);
-    sys::gumPerspective(&lightProjection,75.0,1.0,0.1,1000.0);
-    sys::gumLoadIdentity(&lightProjectionInf);
-    sys::gumPerspective(&lightProjectionInf,75.0,1.0,0.0,1000.0);
+    sys::gumLoadIdentity(&mut lightProjection);
+    sys::gumPerspective(&mut lightProjection,75.0,1.0,0.1,1000.0);
+    sys::gumLoadIdentity(&mut lightProjectionInf);
+    sys::gumPerspective(&mut lightProjectionInf,75.0,1.0,0.0,1000.0);
 
-    sys::gumLoadIdentity(&lightView);
-    sys::gumLoadIdentity(&lightMatrix);
+    sys::gumLoadIdentity(&mut lightView);
+    sys::gumLoadIdentity(&mut lightMatrix);
 
     // define shadowmap
 
     let shadowmap = Texture {
         format: TexturePixelFormat::Psm4444,
-                mipmap:    0, 
+                mipmap:    MipmapLevel::None, 
                 width:     128, 
                 height:       128, 
                 stride:     128,
-                data: renderTarget.start_addr()
+                data: renderTarget
     };
 
     // define geometry
 
-        let torus_mem = allocator.alloc_sized::<Geometry>();
-    let torus = Geometry {
-        identity,
+    let mut torus = Geometry {
+        world: identity,
         //count: sizeof(torus_indices)/sizeof(unsigned short),
-        count: mem::size_of_val(torus_indices)/mem::size_of_val(u16),
-        torus_indices,
-        torus_vertices,
-                data: torus_mem.start_addr(),
-                // 0xffffff
+        count: (mem::size_of_val(&torus_indices)/mem::size_of::<u16>()) as i32,
+        indices: &mut torus_indices as *mut _ as *mut c_void,
+        vertices: &mut torus_vertices as *mut _ as *mut c_void,
+        color: 0xffffff,
     };
 
-        let grid_mem = allocator::alloc_sized::<Geometry>();
-    let grid = Geometry {
-        identity,
+    let mut grid = Geometry {
+        world: identity,
         //count: sizeof(grid_indices)/sizeof(unsigned short),
-        count: mem::size_of_val(grid_indices)/mem::size_of_val(u16),
-        grid_indices,
-        grid_vertices,
-                data: grid_mem.start_addr(),
-        // 0xff7777
+        count: (mem::size_of_val(&grid_indices)/mem::size_of::<u16>()) as i32,
+        indices: &mut grid_indices as *mut _ as *mut c_void,
+        vertices: &mut grid_vertices as *mut _ as *mut c_void,
+        color: 0xff7777,
     };
 
     // run sample
@@ -255,114 +253,118 @@ unsafe fn psp_main_inner() {
 
         // grid
         {
-            let pos = ScePspFVector3 {x: 0, y: -1.5, z: 0};
+            let pos = ScePspFVector3 {x: 0.0, y: -1.5, z: 0.0};
 
-            sys::gumLoadIdentity(&grid.world);
-            sys::gumTranslate(&grid.world,&pos);
+            sys::gumLoadIdentity(&mut grid.world);
+            sys::gumTranslate(&mut grid.world,&pos);
         }
 
         // torus
         {
-            let pos = ScePspFVector3 {0,0.5,0.0};
-            let rot = ScePspFVector3 {val * 0.79 * (GU_PI/180.0), val * 0.98 * (GU_PI/180.0), val * 1.32 * (GU_PI/180.0)};
+            let pos = ScePspFVector3 {x: 0.0, y: 0.5, z: 0.0};
+            let rot = ScePspFVector3 {
+                x: val as f32 * 0.79 * (GU_PI/180.0), 
+                y: val as f32 * 0.98 * (GU_PI/180.0), 
+                z: val as f32 * 1.32 * (GU_PI/180.0)
+            };
 
-            sys::gumLoadIdentity(&torus.world);
-            sys::gumTranslate(&torus.world,&pos);
-            sys::gumRotateXYZ(&torus.world,&rot);
+            sys::gumLoadIdentity(&mut torus.world);
+            sys::gumTranslate(&mut torus.world,&pos);
+            sys::gumRotateXYZ(&mut torus.world,&rot);
         }
 
         // orbiting light
         {
-            let lightLookAt = ScePspFVector3 { torus.world.w.x, torus.world.w.y, torus.world.w.z };
-            let rot1 = ScePspFVector3 {0,val * 0.79 * (GU_PI/180.0),0};
-            let rot2 = ScePspFVector3 {-(GU_PI/180.0)*60.0,0,0};
-            let pos = ScePspFVector3 {0,0,LIGHT_DISTANCE};
+            let lightLookAt = ScePspFVector3 {x: torus.world.w.x,y: torus.world.w.y,z: torus.world.w.z };
+            let rot1 = ScePspFVector3 {x:0.0,y:val as f32 * 0.79 * (GU_PI/180.0),z:0.0};
+            let rot2 = ScePspFVector3 {x:-(GU_PI/180.0)*60.0,y:0.0,z:0.0};
+            let pos = ScePspFVector3 {x:0.0,y:0.0,z:LIGHT_DISTANCE};
 
-            sys::gumLoadIdentity(&lightMatrix);
-            sys::gumTranslate(&lightMatrix,&lightLookAt);
-            sys::gumRotateXYZ(&lightMatrix,&rot1);
-            sys::gumRotateXYZ(&lightMatrix,&rot2);
-            sys::gumTranslate(&lightMatrix,&pos);
+            sys::gumLoadIdentity(&mut lightMatrix);
+            sys::gumTranslate(&mut lightMatrix,&lightLookAt);
+            sys::gumRotateXYZ(&mut lightMatrix,&rot1);
+            sys::gumRotateXYZ(&mut lightMatrix,&rot2);
+            sys::gumTranslate(&mut lightMatrix,&pos);
         }
 
-        sys::gumFastInverse(&lightView,&lightMatrix);
+        sys::gumFastInverse(&mut lightView,&lightMatrix);
 
         // render to shadow map
 
         {
-            sys::sceGuStart(GuContextType::Direct, LIST);
+            sys::sceGuStart(GuContextType::Direct, &mut list as *mut _ as *mut c_void);
 
             // set offscreen texture as a render target
 
-            sys::sceGuDrawBufferList(DisplayPixelFormat::Psm4444,renderTarget.start_addr(),shadowmap.stride);
+            sys::sceGuDrawBufferList(DisplayPixelFormat::Psm4444,renderTarget,shadowmap.stride as i32);
 
             // setup viewport    
 
-            sys::sceGuOffset(2048 - (shadowmap.width/2),2048 - (shadowmap.height/2));
+            sys::sceGuOffset(2048 - (shadowmap.width/2) as u32,2048 - (shadowmap.height/2) as u32);
             sys::sceGuViewport(2048,2048,shadowmap.width,shadowmap.height);
 
             // clear screen
 
             sys::sceGuClearColor(0xffffffff);
             sys::sceGuClearDepth(0);
-            sys::sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
+            sys::sceGuClear(ClearBuffer::COLOR_BUFFER_BIT|ClearBuffer::DEPTH_BUFFER_BIT);
 
             // setup view/projection from light
 
-            sys::sceGuSetMatrix(GU_PROJECTION,&lightProjection);
-            sys::sceGuSetMatrix(GU_VIEW,&lightView);
+            sys::sceGuSetMatrix(MatrixMode::Projection,&lightProjection);
+            sys::sceGuSetMatrix(MatrixMode::View,&lightView);
 
             // shadow casters are drawn in black
             // disable lighting and texturing
 
-            sys::sceGuDisable(GU_LIGHTING);
-            sys::sceGuDisable(GU_TEXTURE_2D);
+            sys::sceGuDisable(GuState::Lighting);
+            sys::sceGuDisable(GuState::Texture2D);
 
             // draw torus to shadow map
 
             drawShadowCaster( &torus );
 
             sys::sceGuFinish();
-            sys::sceGuSync(0,0);
+    sys::sceGuSync(GuSyncMode::Finish,GuSyncBehavior::Wait);
         }
 
         // render to frame buffer
 
         {
-            sys::sceGuStart(GuContextType::Direct,LIST);
+            sys::sceGuStart(GuContextType::Direct,&mut list as *mut _ as *mut c_void);
 
             // set frame buffer
 
-            sys::sceGuDrawBufferList(DisplayPixelFormat::Psm4444,frameBuffer,BUF_WIDTH);
+            sys::sceGuDrawBufferList(DisplayPixelFormat::Psm4444,frameBuffer,BUF_WIDTH as i32);
 
             // setup viewport
 
             sys::sceGuOffset(2048 - (SCREEN_WIDTH/2),2048 - (SCREEN_HEIGHT/2));
-            sys::sceGuViewport(2048,2048,SCREEN_WIDTH,SCREEN_HEIGHT);
+            sys::sceGuViewport(2048,2048,SCREEN_WIDTH as i32,SCREEN_HEIGHT as i32);
             
             // clear screen
 
             sys::sceGuClearColor(0xff554433);
             sys::sceGuClearDepth(0);
-            sys::sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
+            sys::sceGuClear(ClearBuffer::COLOR_BUFFER_BIT|ClearBuffer::DEPTH_BUFFER_BIT);
 
             // setup view/projection from camera
 
-            sys::sceGuSetMatrix(GU_PROJECTION,&projection);
-            sys::sceGuSetMatrix(GU_VIEW,&view);
-            sys::sceGuSetMatrix(GU_MODEL,&identity);
+            sys::sceGuSetMatrix(MatrixMode::Projection,&projection);
+            sys::sceGuSetMatrix(MatrixMode::View,&view);
+            sys::sceGuSetMatrix(MatrixMode::Model,&identity);
 
             // setup a light
             let lightPos = ScePspFVector3 { x: lightMatrix.w.x, y: lightMatrix.w.y, z: lightMatrix.w.z };
             let lightDir = ScePspFVector3 { x: lightMatrix.z.x, y: lightMatrix.z.y, z: lightMatrix.z.z };
 
-            sys::sceGuLight(0,GU_SPOTLIGHT,GU_DIFFUSE,&lightPos);
+            sys::sceGuLight(0,LightType::Spotlight,LightComponent::DIFFUSE,&lightPos);
             sys::sceGuLightSpot(0,&lightDir, 5.0, 0.6);
-            sys::sceGuLightColor(0,GU_DIFFUSE,0x00ff4040);
+            sys::sceGuLightColor(0,LightComponent::DIFFUSE,0x00ff4040);
             sys::sceGuLightAtt(0,1.0,0.0,0.0);
             sys::sceGuAmbient(0x00202020);
-            sys::sceGuEnable(GU_LIGHTING);
-            sys::sceGuEnable(GU_LIGHT0);
+            sys::sceGuEnable(GuState::Lighting);
+            sys::sceGuEnable(GuState::Light0);
 
             // draw torus
 
@@ -370,30 +372,31 @@ unsafe fn psp_main_inner() {
 
             // setup texture projection
 
-            sys::sceGuTexMapMode( GU_TEXTURE_MATRIX, 0, 0 );
-            sys::sceGuTexProjMapMode( GU_POSITION );
+            sys::sceGuTexMapMode( TextureMapMode::TextureMatrix, 0, 0 );
+            sys::sceGuTexProjMapMode( TextureProjectionMapMode::Position );
 
             // set shadowmap as a texture
 
             sys::sceGuTexMode(shadowmap.format,0,0,0);
             sys::sceGuTexImage(shadowmap.mipmap,shadowmap.width,shadowmap.height,shadowmap.stride,shadowmap.data);
-            sys::sceGuTexFunc(GU_TFX_MODULATE,GU_TCC_RGB);
-            sys::sceGuTexFilter(GU_LINEAR,GU_LINEAR);
-            sys::sceGuTexWrap(GU_CLAMP,GU_CLAMP);
-            sys::sceGuEnable(GU_TEXTURE_2D);
+            sys::sceGuTexFunc(TextureEffect::Modulate,TextureColorComponent::Rgb);
+            sys::sceGuTexFilter(TextureFilter::Linear,TextureFilter::Linear);
+            sys::sceGuTexWrap(GuTexWrapMode::Clamp,GuTexWrapMode::Clamp);
+            sys::sceGuEnable(GuState::Texture2D);
 
             // calculate texture projection matrix for shadowmap
  
-            let shadowProj = ScePspFMatrix4::default();
-            sys::gumMultMatrix(&shadowProj, &lightProjectionInf, &lightView);
-            sys::gumMultMatrix(&shadowProj, &textureProjScaleTrans, &shadowProj);
+            let mut shadowProj = ScePspFMatrix4::default();
+            sys::gumMultMatrix(&mut shadowProj, &lightProjectionInf, &lightView);
+            let shadclone = shadowProj.clone();
+            sys::gumMultMatrix(&mut shadowProj, &textureProjScaleTrans, &shadclone);
 
             // draw grid receiving shadow
 
             drawShadowReceiver( &grid, shadowProj );
 
             sys::sceGuFinish();
-            sys::sceGuSync(0,0);
+    sys::sceGuSync(GuSyncMode::Finish,GuSyncBehavior::Wait);
         }
 
         sys::sceDisplayWaitVblankStart();
@@ -404,15 +407,13 @@ unsafe fn psp_main_inner() {
 }
 
 /* usefull geometry functions */
-fn genGrid(rows: u32, columns: u32, size: f32, dstVertices: &[VertexNormal], dstIndices: &[u16] )
+fn genGrid(rows: u32, columns: u32, size: f32, dstVertices: &mut [VertexNormal], dstIndices: &mut [u16] )
     //dstIndices: unsigned short* 
 {
-        let (i, j) = (0,0);
-
     // generate grid (TODO: tri-strips)
         for j in 0..rows {
             for i in 0..columns {
-                let mut curr = &dstVertices[(i+j*columns) as usize];
+                let mut curr = &mut dstVertices[(i+j*columns) as usize];
 
                 curr.nx = 0.0;
                 curr.ny = 1.0;
@@ -427,7 +428,7 @@ fn genGrid(rows: u32, columns: u32, size: f32, dstVertices: &[VertexNormal], dst
         for j in 0..(rows-1) {
             for i in 0..(columns-1) {
                 let index = ((i+(j*(columns-1)))*6) as usize;
-                let mut curr = &mut dstIndices[index..index+6];
+                let curr = &mut dstIndices[index..index+6];
 
                 curr[0] = (i + j * columns) as u16;
                 curr[1] = ((i+1) + j * columns) as u16;
@@ -440,18 +441,17 @@ fn genGrid(rows: u32, columns: u32, size: f32, dstVertices: &[VertexNormal], dst
     }
 }
 
-fn genTorus(slices: u32, rows: u32, radius: f32, thickness: f32, dstVertices: &[VertexNormal], dstIndices: &[u16])
+fn genTorus(slices: u32, rows: u32, radius: f32, thickness: f32, dstVertices: &mut [VertexNormal], dstIndices: &mut [u16])
 {
-        let (i, j) = (0,0);
-
     // generate torus (TODO: tri-strips)
         for j in 0..slices {
             for i in 0..rows {
-                let curr = &dstVertices[(i+j*rows) as usize];
+                let curr = &mut dstVertices[(i+j*rows) as usize];
                 let s = i as f32 + 0.5;
                 let t = j as f32;
                 
 
+                unsafe {
                 let cs = intrinsics::cosf32(s * TWO_PI/slices as f32);
                 let ct = intrinsics::cosf32(t * TWO_PI/rows as f32);
                 let ss = intrinsics::sinf32(s * TWO_PI/slices as f32);
@@ -464,13 +464,14 @@ fn genTorus(slices: u32, rows: u32, radius: f32, thickness: f32, dstVertices: &[
                 curr.x = (radius + thickness * cs) * ct;
                 curr.y = (radius + thickness * cs) * st;
                 curr.z = thickness * ss;
+                }
             }
     }
 
         for j in 0..slices {
             for i in 0..rows {
                     let index = ((i+(j*rows))*6) as usize;
-                    let mut curr = &mut dstIndices[index..index+6];
+                    let curr = &mut dstIndices[index..index+6];
                     let i1 = (i+1)%rows;
                     let j1 = (j+1)%slices;
 

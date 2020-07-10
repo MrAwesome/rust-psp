@@ -1,8 +1,9 @@
 use core::{mem::MaybeUninit, ffi::c_void};
 use crate::vfpu_asm;
+use core::intrinsics;
 use crate::sys::{
     self, ScePspFMatrix4, ScePspFVector3, ScePspFVector4, MatrixMode,
-    vfpu_context::{Context, MatrixSet},
+    vfpu_context::{Context, MatrixSet}, GU_PI,
 };
 
 // TODO: Change all register names in `llvm_asm` to register numbers. Fixes
@@ -192,24 +193,6 @@ pub unsafe extern "C" fn sceGumLoadIdentity() {
     CURRENT_MATRIX_UPDATE = 1;
 }
 
-/// Load identity matrix
-///
-/// ```txt
-/// [1 0 0 0]
-/// [0 1 0 0]
-/// [0 0 1 0]
-/// [0 0 0 1]
-/// ```
-#[allow(non_snake_case)]
-#[no_mangle]
-pub fn gumLoadIdentity(mat: &mut ScePspFMatrix4) {
-    *mat = ScePspFMatrix4::default();
-    mat.x.x = 1.0;
-    mat.y.y = 1.0;
-    mat.z.z = 1.0;
-    mat.w.w = 1.0;
-}
-
 /// Load matrix
 ///
 /// # Parameters
@@ -314,18 +297,6 @@ pub unsafe extern "C" fn sceGumMultMatrix(m: &ScePspFMatrix4) {
     );
 
     CURRENT_MATRIX_UPDATE = 1;
-}
-
-/// Multiply two matrices and return the result
-///
-/// # Parameters
-///
-/// - `a`: First matrix to multiply
-/// - `a`: Second matrix to multiply
-#[allow(non_snake_case)]
-#[no_mangle]
-pub unsafe extern "C" fn gumMultMatrix(a: &ScePspFMatrix4, b: &ScePspFMatrix4) -> ScePspFMatrix4 {
-    gum_mult_matrix(a, b) 
 }
 
 /// Apply ortho projection matrix
@@ -686,6 +657,126 @@ pub unsafe extern "C" fn sceGumUpdateMatrix() {
             MATRIX_UPDATE[i] = 0;
         }
     }
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn gumMultMatrix(result: &mut ScePspFMatrix4, a: &ScePspFMatrix4, b: &ScePspFMatrix4, ) {
+    *result = gum_mult_matrix(a, b) 
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn gumFastInverse(result: &mut ScePspFMatrix4, a: &ScePspFMatrix4) {
+    *result = gum_fast_inverse(a)
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn gumLoadIdentity(mat: &mut ScePspFMatrix4) {
+    *mat = ScePspFMatrix4::default();
+    mat.x.x = 1.0;
+    mat.y.y = 1.0;
+    mat.z.z = 1.0;
+    mat.w.w = 1.0;
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn gumPerspective(m: &mut ScePspFMatrix4, fovy: f32, aspect: f32, near: f32, far: f32) {
+    let mut t = ScePspFMatrix4::default();
+    let angle = (fovy / 2.0) * (GU_PI/180.0);
+    let cotangent = intrinsics::cosf32(angle) / intrinsics::sinf32(angle);
+    let delta_z = near-far;
+
+    gumLoadIdentity(&mut t);
+
+    t.x.x = cotangent / aspect;
+    t.y.y = cotangent;
+    t.z.z = (far + near) / delta_z; // -(far + near) / delta_z
+    t.w.z = 2.0 * (far * near) / delta_z; // -2 * (far * near) / delta_z
+    t.z.w = -1.0;
+    t.w.w = 0.0;
+
+    gumMultMatrix(m,&m.clone(),&t);
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn  gumRotateX(m: &mut ScePspFMatrix4, angle: f32)
+{
+    let mut t = ScePspFMatrix4::default();
+
+    let c = intrinsics::cosf32(angle);
+    let s = intrinsics::sinf32(angle);
+
+    gumLoadIdentity(&mut t);
+
+    t.y.y = c;
+    t.y.z = s;
+    t.z.y = -s;
+    t.z.z = c;
+
+    gumMultMatrix(m,&m.clone(),&t);
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn  gumRotateY(m: &mut ScePspFMatrix4, angle: f32)
+{
+    let mut t = ScePspFMatrix4::default();
+
+    let c = intrinsics::cosf32(angle);
+    let s = intrinsics::sinf32(angle);
+
+    gumLoadIdentity(&mut t);
+
+    t.x.x = c;
+    t.x.z = -s;
+    t.z.x = s;
+    t.z.z = c;
+
+    gumMultMatrix(m,&m.clone(),&t);
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn  gumRotateZ(m: &mut ScePspFMatrix4, angle: f32) {
+    let mut t = ScePspFMatrix4::default();
+
+    let c = intrinsics::cosf32(angle);
+    let s = intrinsics::sinf32(angle);
+
+    gumLoadIdentity(&mut t);
+
+    t.x.x = c;
+    t.x.y = s;
+    t.y.x = -s;
+    t.y.y = c;
+
+    gumMultMatrix(m,&m.clone(),&t);
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn  gumRotateXYZ(m: &mut ScePspFMatrix4, v: &ScePspFVector3) {
+    gumRotateX(m,v.x);
+    gumRotateY(m,v.y);
+    gumRotateZ(m,v.z);
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn  gumRotateZYX(m: &mut ScePspFMatrix4, v: &ScePspFVector3) {
+    gumRotateZ(m,v.z);
+    gumRotateY(m,v.y);
+    gumRotateX(m,v.x);
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub unsafe extern "C" fn  gumTranslate(m: &mut ScePspFMatrix4, v: &ScePspFVector3) {
+    gum_translate(m, v)
 }
 
 fn gum_normalize(v: &mut ScePspFVector3) {
