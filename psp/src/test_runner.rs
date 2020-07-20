@@ -16,7 +16,7 @@ pub struct TestRunner<'a> {
     _mode: TestRunnerMode,
     fd: SceUid,
     failure: bool,
-    failures: Vec<&'a str>
+    failures: Vec<&'a str>,
 }
 
 enum TestRunnerMode {
@@ -81,6 +81,14 @@ impl<'a> TestRunner<'a> {
         }
     }
 
+    pub fn check_true(&mut self, testcase_name: &'a str, pred: bool) {
+        if pred {
+            self.pass(testcase_name, "True.");
+        } else {
+            self.fail(testcase_name, "False!");
+        }
+    }
+
     pub fn check_large_collection<T>(&mut self, testcase_name: &'a str, l: &[T], r: &[T])
     where
         T: core::fmt::Debug + PartialEq + Eq,
@@ -107,10 +115,7 @@ impl<'a> TestRunner<'a> {
                 i += 1;
             }
 
-            self.fail(
-                testcase_name,
-                "Collections were not equal!",
-            );
+            self.fail(testcase_name, "Collections were not equal!");
         }
     }
 
