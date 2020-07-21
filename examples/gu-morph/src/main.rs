@@ -1,205 +1,240 @@
 #![no_std]
 #![no_main]
+#![feature(core_intrinsics)]
 
-use core::{ptr, f32::consts::PI};
-use psp::Align16;
+use core::ffi::c_void;
+use core::intrinsics::{fabsf32 as fabsf, maxnumf32 as max, minnumf32 as min};
+use core::mem::{size_of, size_of_val};
+use psp::math::{cosf32, sinf32};
 use psp::sys::{
-    self, ScePspFVector3, DisplayPixelFormat, GuContextType, GuSyncMode, GuSyncBehavior,
-    GuPrimitive, TextureFilter, TextureEffect, TextureColorComponent,
-    FrontFaceDirection, ShadingModel, GuState, TexturePixelFormat, DepthFunc,
-    VertexType, ClearBuffer, MipmapLevel,
+    self, gum_normalize, ClearBuffer, DepthFunc, DisplayPixelFormat, FrontFaceDirection,
+    GuContextType, GuPrimitive, GuState, GuSyncBehavior, GuSyncMode, LightComponent, LightType,
+    MatrixMode, ScePspFVector3, ShadingModel, VertexType, GU_PI,
 };
-use psp::vram_alloc::get_vram_allocator;
-use psp::{BUF_WIDTH, SCREEN_WIDTH, SCREEN_HEIGHT};
+use psp::{BUF_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 psp::module!("gu_morph", 1, 1);
 
 static mut LIST: psp::Align16<[u32; 0x40000]> = psp::Align16([0; 0x40000]);
 
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 struct Vertex {
     color: u8,
     normal: ScePspFVector3,
     pos: ScePspFVector3,
 }
 
-#[derive(Debug, Default)]
-struct MorphVertex
-{
+#[derive(Debug, Default, Clone, Copy)]
+struct MorphVertex {
     v0: Vertex,
     v1: Vertex,
 }
 
-
-static mut INDICES: psp::Align16<[u8; (64+1)*(64+1)*6]> = psp::Align16([0; 0x40000]);
-static mut VERTICES: psp::Align16<[MorphVertex; 64*64]> = psp::Align16([MorphVertex::default(); 64*64]);
-
+const ROWS: usize = 64;
+const COLS: usize = 64;
 
 fn psp_main() {
     psp::enable_home_button();
-
-	for i in 0..ROWS {
-		let di = ((i as f32)/ROWS as f32);
-		let s = di * GU_PI * 2.0;
-		let ScePspFVector3 v = { cosf(s), cosf(s), sinf(s) };
-
-                for j in 0..COLS {
-			unsigned short* curr = &indices[(j+(i*COLS))*6];
-			unsigned int i1 = (i+1)%ROWS, j1 = (j+1)%COLS;
-
-			float t = (((float)j)/COLS) * GU_PI * 2;
-
-			ScePspFVector3 v2 = { v.x * cosf(t), v.y * sinf(t), v.z };
-			ScePspFVector3 v3;
-
-			// cheap mans sphere -> cube algo :D
-			v3.x = v2.x > 0 ? min(v2.x * 10.0f,1.0f) : max(v2.x * 10.0f,-1.0f);
-			v3.y = v2.y > 0 ? min(v2.y * 10.0f,1.0f) : max(v2.y * 10.0f,-1.0f);
-			v3.z = v2.z > 0 ? min(v2.z * 10.0f,1.0f) : max(v2.z * 10.0f,-1.0f);
-
-			vertices[j+i*COLS].v0.color = (0xff<<24)|((int)(fabsf(v2.x) * 255.0f) << 16)|((int)(fabsf(v2.y) * 255.0f) << 8)|((int)(fabsf(v2.z) * 255.0f));
-			vertices[j+i*COLS].v0.normal = v2;
-			vertices[j+i*COLS].v0.pos = v2;
-
-			vertices[j+i*COLS].v1.color = vertices[j+i*COLS].v0.color;
-			vertices[j+i*COLS].v1.normal = v3;
-			gumNormalize(&vertices[j+i*COLS].v1.normal);
-			vertices[j+i*COLS].v1.pos = v3;
-
-			// indices
-			*curr++ = j + i * COLS;
-			*curr++ = j1 + i * COLS;
-			*curr++ = j + i1 * COLS;
-
-			*curr++ = j1 + i * COLS;
-			*curr++ = j1 + i1 * COLS;
-			*curr++ = j + i1 * COLS;
-		}
-	}
-
-	sceKernelDcacheWritebackAll();
-
-	// setup GU
-
-	sceGuInit();
-
-	sceGuStart(GU_DIRECT,LIST);
-	sceGuDrawBuffer(GU_PSM_8888,(void*)0,BUF_WIDTH);
-	sceGuDispBuffer(SCR_WIDTH,SCR_HEIGHT,(void*)0x88000,BUF_WIDTH);
-	sceGuDepthBuffer((void*)0x110000,BUF_WIDTH);
-	sceGuOffset(2048 - (SCR_WIDTH/2),2048 - (SCR_HEIGHT/2));
-	sceGuViewport(2048,2048,SCR_WIDTH,SCR_HEIGHT);
-	sceGuDepthRange(0xc350,0x2710);
-	sceGuScissor(0,0,SCR_WIDTH,SCR_HEIGHT);
-	sceGuEnable(GU_SCISSOR_TEST);
-	sceGuDepthFunc(GU_GEQUAL);
-	sceGuEnable(GU_DEPTH_TEST);
-	sceGuFrontFace(GU_CW);
-	sceGuShadeModel(GU_SMOOTH);
-	sceGuEnable(GU_CULL_FACE);
-	sceGuEnable(GU_LIGHTING);
-	sceGuEnable(GU_LIGHT0);
-	sceGuFinish();
-	sceGuSync(0,0);
-
-	sceDisplayWaitVblankStart();
-	sceGuDisplay(GU_TRUE);
-
-	sceGumMatrixMode(GU_PROJECTION);
-	sceGumLoadIdentity();
-	sceGumPerspective(75.0f,16.0f/9.0f,0.5f,1000.0f);
-
-	sceGumMatrixMode(GU_VIEW);
-	{
-		ScePspFVector3 pos = {0.0f,0.0f,-2.5f};
-
-		sceGumLoadIdentity();
-		sceGumTranslate(&pos);
-	}
-
-	// run sample
-
-	int val = 0;
-
-	for(;;)
-	{
-		ScePspFVector3 lpos = { 1, 0, 1 };
-		sceGuStart(GU_DIRECT,LIST);
-
-		// clear screen
-
-		sceGuClearColor(0xff554433);
-		sceGuClearDepth(0);
-		sceGuLight(0,GU_DIRECTIONAL,GU_DIFFUSE_AND_SPECULAR,&lpos);
-		sceGuLightColor(0,GU_DIFFUSE_AND_SPECULAR,0xffffffff);
-		sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);
-		sceGuSpecular(12.0f);
-                                                                        
-
-		// rotate morphing mesh
-
-		sceGumMatrixMode(GU_MODEL);
-		{
-			ScePspFVector3 rot = {val * 0.79f * (GU_PI/180.0f), val * 0.98f * (GU_PI/180.0f), val * 1.32f * (GU_PI/180.0f)};
-
-			sceGumLoadIdentity();
-			sceGumRotateXYZ(&rot);
-		}
-
-		sceGuAmbientColor(0xffffffff);
-
-		// draw cube
-
-		sceGuMorphWeight(0,0.5f * sinf(val * (GU_PI/180.0f)) + 0.5f);
-		sceGuMorphWeight(1,-0.5f * sinf(val * (GU_PI/180.0f)) + 0.5f);
-		sceGumDrawArray(GU_TRIANGLES,GU_COLOR_8888|GU_NORMAL_32BITF|GU_VERTEX_32BITF|GU_VERTICES(2)|GU_INDEX_16BIT|GU_TRANSFORM_3D,sizeof(indices)/sizeof(unsigned short),indices,vertices);
-
-		sceGuFinish();
-		sceGuSync(0,0);
-
-		sceDisplayWaitVblankStart();
-		sceGuSwapBuffers();
-
-		val++;
-	}
-
-	sceGuTerm();
-
-	sceKernelExitGame();
-	return 0;
+    unsafe {
+        psp_main_inner()
+    }
 }
 
-/* Exit callback */
-int exit_callback(int arg1, int arg2, void *common)
-{
-	sceKernelExitGame();
-	return 0;
-}
+unsafe fn psp_main_inner() {
 
-/* Callback thread */
-int CallbackThread(SceSize args, void *argp)
-{
-	int cbid;
+    let mut indices = psp::Align16([0 as usize; (ROWS + 1) * (COLS + 1) * 6]);
+    let mut vertices = psp::Align16([MorphVertex::default(); ROWS * COLS]);
 
-	cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
-	sceKernelRegisterExitCallback(cbid);
+    for i in 0..ROWS {
+        let di = i as f32 / ROWS as f32;
+        let s = di * GU_PI * 2.0;
+        let v = ScePspFVector3 {
+            x: cosf32(s),
+            y: cosf32(s),
+            z: sinf32(s),
+        };
 
-	sceKernelSleepThreadCB();
+        for j in 0..COLS {
+            let loc = (j + (i * COLS)) * 6;
+            let curr = &mut indices.0[loc..loc + 6];
+            let (i1, j1) = ((i + 1) % ROWS, (j + 1) % COLS);
 
-	return 0;
-}
+            let t = ((j as f32) / COLS as f32) * GU_PI * 2.0;
 
-/* Sets up the callback thread and returns its thread id */
-int SetupCallbacks(void)
-{
-	int thid = 0;
+            let v2 = ScePspFVector3 {
+                x: v.x * cosf32(t),
+                y: v.y * sinf32(t),
+                z: v.z,
+            };
+            let mut v3 = ScePspFVector3::default();
 
-	thid = sceKernelCreateThread("update_thread", CallbackThread, 0x11, 0xFA0, 0, 0);
-	if(thid >= 0)
-	{
-		sceKernelStartThread(thid, 0, 0);
-	}
+            // cheap mans sphere -> cube algo :D
+            v3.x = if v2.x > 0.0 {
+                min(v2.x * 10.0, 1.0)
+            } else {
+                max(v2.x * 10.0, -1.0)
+            };
+            v3.y = if v2.y > 0.0 {
+                min(v2.y * 10.0, 1.0)
+            } else {
+                max(v2.y * 10.0, -1.0)
+            };
+            v3.z = if v2.z > 0.0 {
+                min(v2.z * 10.0, 1.0)
+            } else {
+                max(v2.z * 10.0, -1.0)
+            };
 
-	return thid;
+            vertices.0[j + i * COLS].v0.color = ((0xff << 24)
+                | (((fabsf(v2.x) * 255.0) as u32) << 16)
+                | (((fabsf(v2.y) * 255.0) as u32) << 8)
+                | ((fabsf(v2.z) * 255.0) as u32))
+                as u8;
+            vertices.0[j + i * COLS].v0.normal = v2;
+            vertices.0[j + i * COLS].v0.pos = v2;
+
+            vertices.0[j + i * COLS].v1.color = vertices.0[j + i * COLS].v0.color;
+            vertices.0[j + i * COLS].v1.normal = v3;
+            gum_normalize(&mut vertices.0[j + i * COLS].v1.normal);
+            vertices.0[j + i * COLS].v1.pos = v3;
+
+            // indices
+            curr[0] = j + i * COLS;
+            curr[1] = j1 + i * COLS;
+            curr[2] = j + i1 * COLS;
+
+            curr[3] = j1 + i * COLS;
+            curr[4] = j1 + i1 * COLS;
+            curr[5] = j + i1 * COLS;
+        }
+    }
+
+    // sceKernelDcacheWritebackAll();
+
+    // setup GU
+
+    sys::sceGuInit();
+
+    sys::sceGuStart(GuContextType::Direct, &mut LIST as *mut _ as *mut c_void);
+    sys::sceGuDrawBuffer(
+        DisplayPixelFormat::Psm8888,
+        0 as *const u8 as _,
+        BUF_WIDTH as i32,
+    );
+    sys::sceGuDispBuffer(
+        SCREEN_WIDTH as i32,
+        SCREEN_HEIGHT as i32,
+        0x88000 as *mut c_void,
+        BUF_WIDTH as i32,
+    );
+    sys::sceGuDepthBuffer(0x110000 as *mut c_void, BUF_WIDTH as i32);
+    sys::sceGuOffset(2048 - (SCREEN_WIDTH / 2), 2048 - (SCREEN_HEIGHT / 2));
+    sys::sceGuViewport(2048, 2048, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+    sys::sceGuDepthRange(0xc350, 0x2710);
+    sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+    sys::sceGuEnable(GuState::ScissorTest);
+    sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuFrontFace(FrontFaceDirection::Clockwise);
+    sys::sceGuShadeModel(ShadingModel::Smooth);
+    sys::sceGuEnable(GuState::CullFace);
+    sys::sceGuEnable(GuState::Lighting);
+    sys::sceGuEnable(GuState::Light0);
+    sys::sceGuFinish();
+    sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
+
+    sys::sceDisplayWaitVblankStart();
+    sys::sceGuDisplay(true);
+
+    sys::sceGumMatrixMode(MatrixMode::Projection);
+    sys::sceGumLoadIdentity();
+    sys::sceGumPerspective(75.0, 16.0 / 9.0, 0.5, 1000.0);
+
+    sys::sceGumMatrixMode(MatrixMode::View);
+    {
+        let pos = ScePspFVector3 {
+            x: 0.0,
+            y: 0.0,
+            z: -2.5,
+        };
+
+        sys::sceGumLoadIdentity();
+        sys::sceGumTranslate(&pos);
+    }
+
+    // run sample
+
+    let mut val = 0.0;
+
+    loop {
+        let lpos = ScePspFVector3 {
+            x: 1.0,
+            y: 0.0,
+            z: 1.0,
+        };
+        sys::sceGuStart(GuContextType::Direct, &mut LIST as *mut _ as *mut c_void);
+
+        // clear screen
+
+        sys::sceGuClearColor(0xff554433);
+        sys::sceGuClearDepth(0);
+        sys::sceGuLight(
+            0,
+            LightType::Directional,
+            LightComponent::DIFFUSE | LightComponent::SPECULAR,
+            &lpos,
+        );
+        sys::sceGuLightColor(
+            0,
+            LightComponent::DIFFUSE | LightComponent::SPECULAR,
+            0xffffffff,
+        );
+        sys::sceGuClear(ClearBuffer::COLOR_BUFFER_BIT | ClearBuffer::DEPTH_BUFFER_BIT);
+        sys::sceGuSpecular(12.0);
+
+        // rotate morphing mesh
+
+        sys::sceGumMatrixMode(MatrixMode::Model);
+        {
+            let rot = ScePspFVector3 {
+                x: val * 0.79 * (GU_PI / 180.0),
+                y: val * 0.98 * (GU_PI / 180.0),
+                z: val * 1.32 * (GU_PI / 180.0),
+            };
+
+            sys::sceGumLoadIdentity();
+            sys::sceGumRotateXYZ(&rot);
+        }
+
+        sys::sceGuAmbientColor(0xffffffff);
+
+        // draw cube
+
+        sys::sceGuMorphWeight(0, 0.5 * sinf32(val * (GU_PI / 180.0)) + 0.5);
+        sys::sceGuMorphWeight(1, -0.5 * sinf32(val * (GU_PI / 180.0)) + 0.5);
+        sys::sceGumDrawArray(
+            GuPrimitive::Triangles,
+            VertexType::COLOR_8888
+                | VertexType::NORMAL_32BITF
+                | VertexType::VERTEX_32BITF
+                | VertexType::VERTICES2
+                | VertexType::INDEX_16BIT
+                | VertexType::TRANSFORM_3D,
+            (size_of_val(&indices) / size_of::<usize>()) as i32,
+            &mut indices as *const _ as *mut c_void,
+            &mut vertices as *const _ as *mut c_void,
+        );
+
+        sys::sceGuFinish();
+        sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
+
+        sys::sceDisplayWaitVblankStart();
+        sys::sceGuSwapBuffers();
+
+        val += 1.0;
+    }
+
+    //sys::sceGuTerm();
+
+    //sys::sceKernelExitGame();
 }
