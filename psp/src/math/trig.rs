@@ -5,7 +5,7 @@ macro_rules! trig_func {
         $( item! {
             #[allow(non_snake_case)]
             #[no_mangle]
-            pub unsafe extern "C" fn [< $name f32 >](rad: f32) -> f32 {
+            pub unsafe extern "C" fn [< $name f >](rad: f32) -> f32 {
                 let mut out = MaybeUninit::uninit();
 
                 $crate::vfpu_asm!(

@@ -3,9 +3,14 @@
 #![feature(core_intrinsics)]
 
 use core::ffi::c_void;
-use core::intrinsics::{fabsf32 as fabsf, maxnumf32 as max, minnumf32 as min};
+use core::intrinsics::{
+    cosf32 as cosf, 
+    fabsf32 as fabsf, 
+    maxnumf32 as max, 
+    minnumf32 as min, 
+    sinf32 as sinf,
+};
 use core::mem::{size_of, size_of_val};
-use psp::math::{cosf32, sinf32};
 use psp::sys::{
     self, gum_normalize, ClearBuffer, DepthFunc, DisplayPixelFormat, FrontFaceDirection,
     GuContextType, GuPrimitive, GuState, GuSyncBehavior, GuSyncMode, LightComponent, LightType,
@@ -35,13 +40,10 @@ const COLS: usize = 64;
 
 fn psp_main() {
     psp::enable_home_button();
-    unsafe {
-        psp_main_inner()
-    }
+    unsafe { psp_main_inner() }
 }
 
 unsafe fn psp_main_inner() {
-
     let mut indices = psp::Align16([0 as usize; (ROWS + 1) * (COLS + 1) * 6]);
     let mut vertices = psp::Align16([MorphVertex::default(); ROWS * COLS]);
 
@@ -49,9 +51,9 @@ unsafe fn psp_main_inner() {
         let di = i as f32 / ROWS as f32;
         let s = di * GU_PI * 2.0;
         let v = ScePspFVector3 {
-            x: cosf32(s),
-            y: cosf32(s),
-            z: sinf32(s),
+            x: cosf(s),
+            y: cosf(s),
+            z: sinf(s),
         };
 
         for j in 0..COLS {
@@ -62,8 +64,8 @@ unsafe fn psp_main_inner() {
             let t = ((j as f32) / COLS as f32) * GU_PI * 2.0;
 
             let v2 = ScePspFVector3 {
-                x: v.x * cosf32(t),
-                y: v.y * sinf32(t),
+                x: v.x * cosf(t),
+                y: v.y * sinf(t),
                 z: v.z,
             };
             let mut v3 = ScePspFVector3::default();
@@ -210,8 +212,8 @@ unsafe fn psp_main_inner() {
 
         // draw cube
 
-        sys::sceGuMorphWeight(0, 0.5 * sinf32(val * (GU_PI / 180.0)) + 0.5);
-        sys::sceGuMorphWeight(1, -0.5 * sinf32(val * (GU_PI / 180.0)) + 0.5);
+        sys::sceGuMorphWeight(0, 0.5 * sinf(val * (GU_PI / 180.0)) + 0.5);
+        sys::sceGuMorphWeight(1, -0.5 * sinf(val * (GU_PI / 180.0)) + 0.5);
         sys::sceGumDrawArray(
             GuPrimitive::Triangles,
             VertexType::COLOR_8888
