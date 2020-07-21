@@ -1,0 +1,10 @@
+[package]
+name = "gu-morph"
+version = "0.1.0"
+authors = ["Glenn Hope <glenn.alexander.hope@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+psp = { path = "../../psp" }

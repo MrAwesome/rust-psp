@@ -99,7 +99,7 @@ pub struct ScePspL64Vector3 {
 // take this struct should load it as 3 components (X, Y, Z) rather than a quad
 // load at once?
 #[repr(C, align(16))]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct ScePspFVector3 {
     pub x: f32,
     pub y: f32,
