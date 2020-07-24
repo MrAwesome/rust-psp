@@ -2,6 +2,9 @@
 #![no_main]
 #![feature(core_intrinsics)]
 
+#[cfg(not(feature = "stub-only"))] extern crate alloc;
+use alloc::vec::Vec;
+
 use core::ffi::c_void;
 use core::intrinsics::{
     cosf32 as cosf, 
@@ -10,7 +13,7 @@ use core::intrinsics::{
     minnumf32 as min, 
     sinf32 as sinf,
 };
-use core::mem::{size_of, size_of_val};
+use core::mem::{MaybeUninit, size_of, size_of_val};
 use psp::sys::{
     self, gum_normalize, ClearBuffer, DepthFunc, DisplayPixelFormat, FrontFaceDirection,
     GuContextType, GuPrimitive, GuState, GuSyncBehavior, GuSyncMode, LightComponent, LightType,
@@ -21,6 +24,36 @@ use psp::{BUF_WIDTH, SCREEN_HEIGHT, SCREEN_WIDTH};
 psp::module!("gu_morph", 1, 1);
 
 static mut LIST: psp::Align16<[u32; 0x40000]> = psp::Align16([0; 0x40000]);
+static mut FICKJFSINDICES: psp::Align16<[usize; (ROWS + 1) * (COLS + 1) * 6]> = psp::Align16([0; (ROWS + 1) * (COLS + 1) * 6]);
+static mut FICKJFSVERTICES: psp::Align16<[MorphVertex; ROWS*COLS]> = psp::Align16([MorphVertex{
+    v0: Vertex {
+        color: 0,
+        normal: ScePspFVector3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        pos: ScePspFVector3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    },
+    v1: Vertex {
+        color: 0,
+        normal: ScePspFVector3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        pos: ScePspFVector3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    }
+}; ROWS*COLS]);
+
 
 #[derive(Debug, Default, Clone, Copy)]
 struct Vertex {
@@ -44,8 +77,17 @@ fn psp_main() {
 }
 
 unsafe fn psp_main_inner() {
-    let mut indices = psp::Align16([0 as usize; (ROWS + 1) * (COLS + 1) * 6]);
-    let mut vertices = psp::Align16([MorphVertex::default(); ROWS * COLS]);
+    let mut INDICES = psp::Align16(Vec::new());
+    for _ in 0.. ((ROWS + 1) * (COLS + 1) * 6) {
+        INDICES.0.push(0);
+    }
+    let mut VERTICES = psp::Align16(Vec::new());
+    for _ in 0..(ROWS*COLS) {
+        VERTICES.0.push(MorphVertex::default());
+    }
+
+    //psp::dprintln!("sizeof: {}", (size_of_val(&INDICES) / size_of::<usize>()) as i32);
+    //psp::dprintln!("len: {}", ((ROWS + 1) * (COLS + 1) * 6) as i32);
 
     for i in 0..ROWS {
         let di = i as f32 / ROWS as f32;
@@ -58,7 +100,7 @@ unsafe fn psp_main_inner() {
 
         for j in 0..COLS {
             let loc = (j + (i * COLS)) * 6;
-            let curr = &mut indices.0[loc..loc + 6];
+            let curr = &mut INDICES.0[loc..loc + 6];
             let (i1, j1) = ((i + 1) % ROWS, (j + 1) % COLS);
 
             let t = ((j as f32) / COLS as f32) * GU_PI * 2.0;
@@ -87,18 +129,18 @@ unsafe fn psp_main_inner() {
                 max(v2.z * 10.0, -1.0)
             };
 
-            vertices.0[j + i * COLS].v0.color = ((0xff << 24)
+            VERTICES.0[j + i * COLS].v0.color = ((0xff << 24)
                 | (((fabsf(v2.x) * 255.0) as u32) << 16)
                 | (((fabsf(v2.y) * 255.0) as u32) << 8)
                 | ((fabsf(v2.z) * 255.0) as u32))
                 as u8;
-            vertices.0[j + i * COLS].v0.normal = v2;
-            vertices.0[j + i * COLS].v0.pos = v2;
+            VERTICES.0[j + i * COLS].v0.normal = v2;
+            VERTICES.0[j + i * COLS].v0.pos = v2;
 
-            vertices.0[j + i * COLS].v1.color = vertices.0[j + i * COLS].v0.color;
-            vertices.0[j + i * COLS].v1.normal = v3;
-            gum_normalize(&mut vertices.0[j + i * COLS].v1.normal);
-            vertices.0[j + i * COLS].v1.pos = v3;
+            VERTICES.0[j + i * COLS].v1.color = VERTICES.0[j + i * COLS].v0.color;
+            VERTICES.0[j + i * COLS].v1.normal = v3;
+            gum_normalize(&mut VERTICES.0[j + i * COLS].v1.normal);
+            VERTICES.0[j + i * COLS].v1.pos = v3;
 
             // indices
             curr[0] = j + i * COLS;
@@ -111,7 +153,7 @@ unsafe fn psp_main_inner() {
         }
     }
 
-    // sceKernelDcacheWritebackAll();
+    //psp::sceKernelDcacheWritebackAll();
 
     // setup GU
 
@@ -222,9 +264,9 @@ unsafe fn psp_main_inner() {
                 | VertexType::VERTICES2
                 | VertexType::INDEX_16BIT
                 | VertexType::TRANSFORM_3D,
-            (size_of_val(&indices) / size_of::<usize>()) as i32,
-            &mut indices as *const _ as *mut c_void,
-            &mut vertices as *const _ as *mut c_void,
+            25352,
+            INDICES.0.as_mut_ptr() as *mut c_void,
+            VERTICES.0.as_mut_ptr() as *mut c_void,
         );
 
         sys::sceGuFinish();
