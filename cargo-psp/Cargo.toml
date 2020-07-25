@@ -6,7 +6,8 @@ repository = "https://github.com/overdrivenpotato/rust-psp"
 license = "MIT"
 authors = [
     "Marko Mijalkovic <marko.mijalkovic97@gmail.com>",
-    "Paul Sajna <sajattack@gmail.com>"
+    "Paul Sajna <sajattack@gmail.com>",
+    "Glenn Hope <glenn.alexander.hope@gmail.com>"
 ]
 edition = "2018"
 default-run = "cargo-psp"

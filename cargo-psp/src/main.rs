@@ -1,107 +1,33 @@
 use cargo_metadata::MetadataCommand;
 use std::{
-    env, fs, thread,
+    env, fs,
     io::{self, ErrorKind, Read, Write},
     process::{self, Command, Stdio},
+    thread,
 };
 
-const CONFIG_NAME: &str = "Psp.toml";
+mod psp_xargo;
+use psp_xargo::get_xargo_toml_text;
 
-#[derive(serde_derive::Deserialize, Default)]
-struct PspConfig {
-    /// Title shown in the XMB menu.
-    title: Option<String>,
+mod psp_config;
+use psp_config::PspConfig;
 
-    /// Path to 24bit 144x80 PNG icon shown in the XMB menu.
-    xmb_icon_png: Option<String>,
-
-    /// Path to animated icon shown in the XMB menu.
-    ///
-    /// The PSP expects a 29.97fps 144x80 PMF video file (custom Sony format).
-    xmb_icon_pmf: Option<String>,
-
-    /// Path to 24bit 480x272 PNG background shown in the XMB menu.
-    xmb_background_png: Option<String>,
-
-    /// Overlay background shown in the XMB menu.
-    ///
-    /// Exactly like `xmb_background_png`, but it is overlayed on top.
-    xmb_background_overlay_png: Option<String>,
-
-    /// Path to ATRAC3 audio file played in the XMB menu.
-    ///
-    /// Must be 66kbps, under 500KB and under 55 seconds.
-    xmb_music_at3: Option<String>,
-
-    /// Path to associated PSAR data stored in the EBOOT.
-    psar: Option<String>,
-
-    /// Product number of the game, in the format `ABCD-12345`.
-    ///
-    /// Example: UCJS-10001
-    disc_id: Option<String>,
-
-    /// Version of the game, e.g. "1.00".
-    disc_version: Option<String>,
-
-    // TODO: enum
-    /// Language of the game. "JP" indicates Japanese, even though this is not
-    /// the proper ISO 639 code...
-    language: Option<String>,
-
-    // TODO: enum
-    /// Parental Control level needed to access the file. 1-11
-    /// - 1 = General audience
-    /// - 5 = 12 year old
-    /// - 7 = 15 year old
-    /// - 9 = 18 year old
-    parental_level: Option<u32>,
-
-    /// PSP Firmware Version required by the game (e.g. "6.61").
-    psp_system_ver: Option<String>,
-
-    // TODO: document values
-    /// Bitmask of allowed regions. (0x8000 is region 2?)
-    region: Option<u32>,
-
-    /// Japanese localized title.
-    title_jp: Option<String>,
-
-    /// French localized title.
-    title_fr: Option<String>,
-
-    /// Spanish localized title.
-    title_es: Option<String>,
-
-    /// German localized title.
-    title_de: Option<String>,
-
-    /// Italian localized title.
-    title_it: Option<String>,
-
-    /// Dutch localized title.
-    title_nl: Option<String>,
-
-    /// Portugese localized title.
-    title_pt: Option<String>,
-
-    /// Russian localized title.
-    title_ru: Option<String>,
-
-    /// Used by the firmware updater to denote the firmware version it updates to.
-    updater_version: Option<String>,
-}
+mod cmdline_parsing;
+use cmdline_parsing::parse_cmdline;
 
 const SUBPROCESS_ENV_VAR: &str = "__CARGO_PSP_RUN_XARGO";
+const TARGET_TRIPLE: &str = "mipsel-sony-psp";
 
 fn main() {
     if env::var(SUBPROCESS_ENV_VAR).is_ok() {
         return xargo::main_inner(xargo::XargoMode::Build);
     }
 
+    let options = parse_cmdline();
+
     // Ensure there is no `Xargo.toml` file already.
     match fs::metadata("Xargo.toml") {
-        Err(e) if e.kind() == ErrorKind::NotFound => {},
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
         Err(e) => panic!("{}", e),
         Ok(_) => {
             println!("Found Xargo.toml file.");
@@ -111,74 +37,35 @@ fn main() {
         }
     }
 
-    let config = match fs::read(CONFIG_NAME) {
-        Ok(bytes) => match toml::from_slice(&bytes) {
-            Ok(config) => config,
-            Err(e) => {
-                println!("Failed to read Psp.toml: {}", e);
-                println!("Please ensure that it is formatted correctly.");
-                process::exit(1);
-            }
-        },
+    let config = PspConfig::read_from_disk();
 
-        Err(e) if e.kind() == ErrorKind::NotFound => PspConfig::default(),
-        Err(e) => panic!("{}", e),
-    };
-
-    // Skip `cargo psp`
-    let args = env::args().skip(2);
-
-    let xargo_toml = r#"
-[target.mipsel-sony-psp.dependencies.core]
-stage = 0
-
-#[target.mipsel-sony-psp.dependencies.compiler_builtins]
-#features = ["mem"]
-#stage = 1
-#path = "/home/glenn/rust-stdlib-potato/compiler-builtins"
-
-#[target.mipsel-sony-psp.dependencies.libc]
-#features = ["rustc-dep-of-std"]
-#stage = 2
-#path = "/home/glenn/rust-stdlib-potato/libc"
-
-[target.mipsel-sony-psp.dependencies.alloc]
-stage = 3
-
-[target.mipsel-sony-psp.dependencies.panic_unwind]
-stage = 4
-
-[target.mipsel-sony-psp.dependencies.std]
-stage = 5
-
-
-[patch.crates-io.libc]
-path = "/home/glenn/rust-stdlib-potato/libc"
-
-#[patch.crates-io.compiler_builtins]
-#path = "/home/glenn/rust-stdlib-potato/compiler-builtins"
-
-#[patch.crates-io.cfg-if]
-#path = "/home/glenn/rust-stdlib-potato/cfg-if"
-
-#[patch.crates-io.cc]
-#path = "/home/glenn/rust-stdlib-potato/cc-rs"
-"#;
+    let xargo_toml = get_xargo_toml_text(&options);
 
     fs::write("Xargo.toml", xargo_toml).unwrap();
 
     // FIXME: This is a workaround. This should eventually be removed.
-    let rustflags = env::var("RUSTFLAGS").unwrap_or("".into())
-        + " -C link-dead-code -C opt-level=3";
+    let rustflags =
+        env::var("RUSTFLAGS").unwrap_or("".into()) + " -C link-dead-code -C opt-level=3";
 
-    let mut process = Command::new("cargo-psp")
-        // Relaunch as xargo wrapper.
-        .env(SUBPROCESS_ENV_VAR, "1")
+    // We re-initialize cargo-psp as a wrapper for Xargo, to prevent end users
+    // from needing to install the `xargo` binary.
+    let mut command = Command::new("cargo-psp");
+    command
         .arg("build")
         .arg("--target")
-        .arg("mipsel-sony-psp")
-        .args(args)
-        .env("RUSTFLAGS", rustflags)
+        .arg(TARGET_TRIPLE)
+        .args(&options.cargo_args)
+        .env("RUSTFLAGS", rustflags);
+    
+    if let Some(src_dir) = options.local_rust_src {
+        command.env("XARGO_RUST_SRC", src_dir);
+    }
+
+    if options.release {
+        command.arg("--release");
+    }
+
+    let mut process = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -206,13 +93,12 @@ path = "/home/glenn/rust-stdlib-potato/libc"
             }
 
             if bytes == 0 {
-                break
+                break;
             }
 
             stdout.write_all(&buf[0..bytes]).unwrap();
         }
     });
-
 
     let status = process.wait().unwrap();
 
@@ -229,8 +115,7 @@ path = "/home/glenn/rust-stdlib-potato/libc"
         .exec()
         .expect("failed to get cargo metadata");
 
-    // Is there a better way to do this?
-    let profile_name = if env::args().any(|arg| arg == "--release") {
+    let profile_name = if options.release {
         "release"
     } else {
         "debug"
@@ -238,7 +123,7 @@ path = "/home/glenn/rust-stdlib-potato/libc"
 
     let bin_dir = metadata
         .target_directory
-        .join("mipsel-sony-psp")
+        .join(TARGET_TRIPLE)
         .join(profile_name);
 
     for id in metadata.clone().workspace_members {
@@ -261,39 +146,9 @@ path = "/home/glenn/rust-stdlib-potato/libc"
                     .output()
                     .expect("failed to run prxgen");
 
-                let config_args = vec![
-                    ("-s", "DISC_ID", config.disc_id.clone()),
-                    ("-s", "DISC_VERSION", config.disc_version.clone()),
-                    ("-s", "LANGUAGE", config.language.clone()),
-                    ("-d", "PARENTAL_LEVEL", config.parental_level.as_ref().map(u32::to_string)),
-                    ("-s", "PSP_SYSTEM_VER", config.psp_system_ver.clone()),
-                    ("-d", "REGION", config.region.as_ref().map(u32::to_string)),
-                    ("-s", "TITLE_0", config.title_jp.clone()),
-                    ("-s", "TITLE_2", config.title_fr.clone()),
-                    ("-s", "TITLE_3", config.title_es.clone()),
-                    ("-s", "TITLE_4", config.title_de.clone()),
-                    ("-s", "TITLE_5", config.title_it.clone()),
-                    ("-s", "TITLE_6", config.title_nl.clone()),
-                    ("-s", "TITLE_7", config.title_pt.clone()),
-                    ("-s", "TITLE_8", config.title_ru.clone()),
-                    ("-s", "UPDATER_VER", config.updater_version.clone()),
-                ];
-
                 Command::new("mksfo")
                     // Add the optional config args
-                    .args({
-                        config_args
-                            .into_iter()
-
-                            // Filter through all the values that are not `None`
-                            .filter_map(|(f, k, v)| v.map(|v| (f, k, v)))
-
-                            // Map into 2 arguments, e.g. "-s" "NAME=VALUE"
-                            .flat_map(|(flag, key, value)| vec![
-                                flag.into(),
-                                format!("{}={}", key, value),
-                            ])
-                    })
+                    .args(config.get_sfo_args())
                     .arg(config.title.clone().unwrap_or(target.name))
                     .arg(&sfo_path)
                     .stdin(Stdio::inherit())
