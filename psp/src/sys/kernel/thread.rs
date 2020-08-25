@@ -6,9 +6,9 @@
 //! extrapolated from symbolic debugging information found in the Japanese
 //! version of Puzzle Bobble.
 
-use core::ffi::c_void;
 use super::SceUid;
 use crate::eabi::i6;
+use core::ffi::c_void;
 
 /// Structure to hold the psp profiler register values
 #[repr(C)]
@@ -85,7 +85,7 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags!{
+bitflags::bitflags! {
     /// Event flag creation attributes.
     #[repr(transparent)]
     pub struct EventFlagAttributes: u32 {
@@ -246,12 +246,8 @@ pub type SceKernelVTimerHandler = unsafe extern "C" fn(
     arg3: *mut c_void,
 ) -> u32;
 
-pub type SceKernelVTimerHandlerWide = unsafe extern "C" fn(
-    uid: SceUid,
-    arg1: i64,
-    arg2: i64,
-    arg3: *mut c_void,
-) -> u32;
+pub type SceKernelVTimerHandlerWide =
+    unsafe extern "C" fn(uid: SceUid, arg1: i64, arg2: i64, arg3: *mut c_void) -> u32;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -268,11 +264,8 @@ pub struct SceKernelVTimerInfo {
 }
 
 // TODO: Is this ok? What if the thread has no event handler registered?
-pub type SceKernelThreadEventHandler = unsafe extern "C" fn(
-    mask: i32,
-    thid: SceUid,
-    common: *mut c_void
-) -> i32;
+pub type SceKernelThreadEventHandler =
+    unsafe extern "C" fn(mask: i32, thid: SceUid, common: *mut c_void) -> i32;
 
 /// Struct for event handler info
 #[repr(C)]
@@ -403,11 +396,8 @@ pub struct SceKernelVTimerOptParam {
 }
 
 /// Callback function prototype
-pub type SceKernelCallbackFunction = unsafe extern "C" fn(
-    arg1: i32,
-    arg2: i32,
-    arg: *mut c_void,
-) -> i32;
+pub type SceKernelCallbackFunction =
+    unsafe extern "C" fn(arg1: i32, arg2: i32, arg: *mut c_void) -> i32;
 
 /// Structure to hold the status information for a callback
 #[repr(C)]
@@ -427,6 +417,16 @@ pub struct SceKernelCallbackInfo {
     pub notify_count: i32,
     /// Unknown
     pub notify_arg: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct SceKernelCreateTlsplOptions {
+    // The size of this structure.
+    pub size: usize,
+    // The alignment. Defaults to 4. Must be a power of 2.
+    // Values less than 4 will be set to 4.
+    pub align: u32,
 }
 
 psp_extern! {
@@ -2259,4 +2259,66 @@ psp_extern! {
     ///
     /// Pointer to the registers, null on error
     pub fn sceKernelReferGlobalProfiler() -> *mut DebugProfilerRegs;
+
+    #[psp(0x8DAFF657, i6)]
+    /// Create a thread-local storage pool.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The name of the TLS pool. NOTE: must be null-terminated.
+    /// - `part`: The partition ID. You very likely want 2, which is "user".
+    /// - `attr`: Pool attributes (unknown)
+    /// - `size`: Size of memory block (will be forcefully upaligned by the function)
+    /// - `count`: Number of blocks to allocate
+    /// - `options`: Options for pool creation. 
+    ///
+    /// # Return Value
+    ///
+    /// Unique identifier of the TLS pool.
+    pub fn sceKernelCreateTlspl(
+        name: *const u8,
+        part: i32,
+        attr: u32,
+        size: u32,
+        count: u32,
+        options: *mut SceKernelCreateTlsplOptions,
+    ) -> SceUid;
+
+    #[psp(0x32BF938E)]
+    /// Delete the pool. Possibly frees its memory as well - the
+    /// jpcsp implementation frees after deleting the pool.
+    ///
+    /// # Parameters
+    ///
+    /// - `uid`: The unique identifier of the TLS pool
+    ///
+    /// # Return Value
+    ///
+    /// 0 on success, <0 on failure
+    pub fn sceKernelDeleteTlspl(uid: SceUid) -> i32;
+
+    #[psp(0x4A719FB2)]
+    /// Free the memory of the pool. Behavior currently unclear.
+    ///
+    /// # Parameters
+    ///
+    /// - `uid`: The unique identifier of the TLS pool
+    ///
+    /// # Return Value
+    ///
+    /// Unknown.
+    pub fn sceKernelFreeTlspl(uid: SceUid) -> i32;
+
+    #[psp(0x721067F3)]
+    /// Get the status of the pool. Behavior currently unclear.
+    ///
+    /// # Parameters
+    ///
+    /// - `uid`: The unique identifier of the TLS pool
+    /// - `info_ptr`: Currently unknown, likely a ptr to a status struct
+    ///
+    /// # Return Value
+    ///
+    /// Pointer to the TLS area for the thread, null on error.
+    pub fn sceKernelReferTlsplStatus(uid: SceUid, info_ptr: u32) -> i32;
 }

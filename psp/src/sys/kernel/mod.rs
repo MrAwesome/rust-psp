@@ -691,6 +691,20 @@ psp_extern! {
     ///
     /// 1 if interrupts are currently enabled.
     pub fn sceKernelIsCpuIntrEnable() -> i32;
+
+    #[psp(0xFA835CDE)]
+    /// Get the address of the TLS pool referred to by `uid`.
+    ///
+    /// # Parameters
+    ///
+    /// - `uid`: The unique identifier of the TLS pool
+    ///
+    /// # Return Value
+    ///
+    /// Pointer to the TLS area for the given uid.
+    /// May return null on error, but some testing indicates that will not
+    /// always be the case. Best to check for successful pool creation before using this.
+    pub fn sceKernelGetTlsAddr(uid: SceUid) -> *mut c_void;
 }
 
 #[repr(C)]
